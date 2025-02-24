@@ -2,6 +2,8 @@ const express = require("express");
 const pool = require("../db");
 const jwt = require("jsonwebtoken");
 const router = express.Router();
+const sendEmail = require('../utils/sendEmail');
+
 
 //  Middleware to Authenticate Users
 const authenticateUser = (req, res, next) => {
@@ -20,11 +22,22 @@ const authenticateUser = (req, res, next) => {
 //  Middleware to Check If User Is an Admin
 const authenticateAdmin = (req, res, next) => {
     const token = req.header("Authorization");
-    if (!token) return res.status(403).json({ message: "Access Denied" });
+    if (!token) return res.status(403).json({ message: "Access Denied: No token provided" });
 
     try {
-        const decoded = jwt.verify(token.split(" ")[1], process.env.JWT_SECRET);
-        if (decoded.role !== 'admin') return res.status(403).json({ message: "Admins only" });
+       // Ensure token starts with "Bearer "
+       const tokenParts = token.split(" ");
+       if (tokenParts.length !== 2 || tokenParts[0] !== "Bearer") {
+           return res.status(403).json({ message: "Invalid token format" });
+       }
+
+        const decoded = jwt.verify(tokenParts[1], process.env.JWT_SECRET);
+        
+  //  Ensure user exists in the token and is an admin
+  if (!decoded || !decoded.id || decoded.role !== 'admin') {
+    return res.status(403).json({ message: "Access Denied: Admins only" });
+}
+req.user = decoded; //  Store user info in `req.user`
 
         next();
     } catch (error) {
@@ -167,6 +180,10 @@ router.delete('/:id', authenticateUser, async (req, res) => {
         // Delete the review
         await pool.query("DELETE FROM reviews WHERE id = ?", [id]);
 
+    // Log the deletion in moderation_logs
+    await pool.query("INSERT INTO moderation_logs (admin_id, review_id, action) VALUES (?, ?, ?)", 
+    [user_id, id, 'deleted']);
+
         res.json({ message: "Review deleted successfully" });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -198,9 +215,13 @@ router.get('/admin/all', authenticateUser, async (req, res) => {
     }
 });
 
-//  Flag a Review as Inappropriate
+
+
+//  Flag a Review as Inappropriate & Notify Admin
 router.post('/:id/flag', authenticateUser, async (req, res) => {
     const { id } = req.params;
+    const user_id = req.user.id; // Get user ID from token
+
 
     try {
         // Check if review exists
@@ -210,11 +231,23 @@ router.post('/:id/flag', authenticateUser, async (req, res) => {
         // Flag the review
         await pool.query("UPDATE reviews SET flagged = TRUE WHERE id = ?", [id]);
 
-        res.json({ message: "Review flagged for moderation" });
+       // Log the flagging action
+       await pool.query("INSERT INTO moderation_logs (admin_id, review_id, action) VALUES (?, ?, ?)", 
+        [user_id, id, 'flagged']);
+
+        // Send Email Notification to Admin
+        const adminEmail = process.env.ADMIN_EMAIL;
+        const emailSubject = "🚩 Flagged Review Alert!";
+        const emailText = `A review (ID: ${id}) has been flagged for moderation. Please review it at your admin panel.`;
+
+        await sendEmail(adminEmail, emailSubject, emailText);
+
+        res.json({ message: "Review flagged for moderation, admin notified" });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
+
 
 // Get All Flagged Reviews (Admins Only)
 router.get('/flagged/all', authenticateAdmin, async (req, res) => {
@@ -227,6 +260,49 @@ router.get('/flagged/all', authenticateAdmin, async (req, res) => {
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
+});
+
+//  Approve a Flagged Review
+router.put('/:id/approve', authenticateAdmin, async (req, res) => {
+  const { id } = req.params;
+  const admin_id = req.user.id; // Admin ID from token
+
+  try {
+      // Check if review exists
+      const [review] = await pool.query("SELECT * FROM reviews WHERE id = ?", [id]);
+      if (review.length === 0) return res.status(404).json({ message: "Review not found" });
+
+      // Mark review as approved
+      await pool.query("UPDATE reviews SET flagged = FALSE WHERE id = ?", [id]);
+
+      // Log the approval
+      await pool.query("INSERT INTO moderation_logs (admin_id, review_id, action) VALUES (?, ?, ?)", 
+          [admin_id, id, 'approved']);
+
+      res.json({ message: "Review approved and removed from flagged list" });
+  } catch (error) {
+      res.status(500).json({ error: error.message });
+  }
+});
+
+// Get Moderation Logs (Admins Only)
+router.get('/moderation-logs', authenticateAdmin, async (req, res) => {
+  try {
+      const [logs] = await pool.query(`
+          SELECT ml.id, ml.action, ml.timestamp, 
+                 u.username AS admin, 
+                 r.review, m.title AS movie_title 
+          FROM moderation_logs ml
+          JOIN users u ON ml.admin_id = u.id
+          JOIN reviews r ON ml.review_id = r.id
+          JOIN movies m ON r.movie_id = m.id
+          ORDER BY ml.timestamp DESC
+      `);
+
+      res.json(logs);
+  } catch (error) {
+      res.status(500).json({ error: error.message });
+  }
 });
 
 // Export the router
