@@ -31,15 +31,79 @@ router.post('/', authenticateAdmin, async (req, res) => {
     }
 });
 
-// Get All Movies
+// //  Get All Movies (Supports Pagination)
+// router.get('/', async (req, res) => {
+//     try {
+//         let { page, limit } = req.query;
+
+//         if (!page || !limit) {
+//             //  If no pagination params, return all movies (old behavior)
+//             const [movies] = await pool.query("SELECT * FROM movies");
+//             return res.json(movies);
+//         }
+
+//         // Apply Pagination
+//         page = parseInt(page) || 1;
+//         limit = parseInt(limit) || 10;
+//         const offset = (page - 1) * limit;
+
+//         const [movies] = await pool.query("SELECT * FROM movies LIMIT ? OFFSET ?", [limit, offset]);
+
+//         const [[{ total }]] = await pool.query("SELECT COUNT(*) as total FROM movies");
+
+//         res.json({
+//             page,
+//             totalPages: Math.ceil(total / limit),
+//             totalMovies: total,
+//             movies
+//         });
+//     } catch (error) {
+//         res.status(500).json({ error: error.message });
+//     }
+// });
+
+//  Get Movies with Pagination & Sorting
 router.get('/', async (req, res) => {
     try {
-        const [movies] = await pool.query("SELECT * FROM movies");
-        res.json(movies);
+        let { page, limit, sortBy, order } = req.query;
+
+        //  Default pagination settings
+        page = parseInt(page) || 1;
+        limit = parseInt(limit) || 10;
+        const offset = (page - 1) * limit;
+
+        //  Allowed sorting fields
+        const allowedSortFields = ['title', 'release_date', 'avg_rating'];
+        sortBy = allowedSortFields.includes(sortBy) ? sortBy : 'title'; // Default to title
+
+        // Order validation (ASC or DESC)
+        order = order && order.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
+
+        //  Query movies with pagination and sorting
+        const [movies] = await pool.query(
+            `SELECT m.*, IFNULL(AVG(r.rating), 0) AS avg_rating 
+            FROM movies m 
+            LEFT JOIN reviews r ON m.id = r.movie_id 
+            GROUP BY m.id
+            ORDER BY ${sortBy} ${order} 
+            LIMIT ? OFFSET ?`, 
+            [limit, offset]
+        );
+
+        //  Get total count of movies
+        const [[{ total }]] = await pool.query("SELECT COUNT(*) as total FROM movies");
+
+        res.json({
+            page,
+            totalPages: Math.ceil(total / limit),
+            totalMovies: total,
+            movies
+        });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
+
 
 
 
@@ -136,7 +200,7 @@ router.get('/search', async (req, res) => {
 });
 
 
-// ✅ Get a Specific Movie by ID (Public Access)
+//  Get a Specific Movie by ID (Public Access)
 router.get('/:id', async (req, res) => {
     let { id } = req.params;
     id = parseInt(id, 10); // Ensure ID is an integer
