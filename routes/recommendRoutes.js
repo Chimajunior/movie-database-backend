@@ -51,7 +51,7 @@ router.get('/content-based', authenticateUser, async (req, res) => {
 
 // Get Personalized Movie Recommendations (Collaborative Filtering)
 router.get('/collaborative', authenticateUser, async (req, res) => {
-    const user_id = req.user.id;
+    const user_id = req.user.id; 
 
     try {
         // Step 1: Find users with similar ratings
@@ -78,3 +78,4 @@ router.get('/collaborative', authenticateUser, async (req, res) => {
 });
 
 module.exports = router;
+
