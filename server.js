@@ -8,6 +8,9 @@ const reviewRoutes = require('./routes/reviewRoutes');
 const recommendRoutes = require('./routes/recommendRoutes'); 
 const searchRoutes = require('./routes/searchRoutes');
 const profileRoutes = require("./routes/profileRoutes.js");
+const watchlistRoutes = require("./routes/watchlistRoutes");
+
+
 
 
 const app = express();
@@ -20,7 +23,7 @@ app.use('/api/reviews', reviewRoutes);
 app.use('/api/recommend', recommendRoutes);
 app.use('/api/search', searchRoutes);
 app.use("/api/profile", profileRoutes);
-
+app.use("/api/watchlist", watchlistRoutes);
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
