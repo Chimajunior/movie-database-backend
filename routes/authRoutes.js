@@ -33,22 +33,34 @@ router.post('/register', async (req, res) => {
 
 //  Login User
 router.post('/login', async (req, res) => {
-    const { email, password } = req.body;
+    const { identifier, password } = req.body;
+
     try {
-        // Find user by email
-        const [users] = await pool.query("SELECT * FROM users WHERE email = ?", [email]);
-        if (users.length === 0) return res.status(401).json({ error: "Invalid credentials" });
+        // Allow login with username OR email
+        const [users] = await pool.query(
+            "SELECT * FROM users WHERE email = ? OR username = ?", 
+            [identifier, identifier]
+        );
+
+        if (users.length === 0) 
+            return res.status(401).json({ error: "Invalid credentials" });
 
         const user = users[0];
 
-        // Check password
+        // Check password validity
         const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) return res.status(401).json({ error: "Invalid credentials" });
+        if (!isMatch) 
+            return res.status(401).json({ error: "Invalid credentials" });
 
-        // Generate JWT Token
-        const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '1h' });
+        // Generate JWT token
+        const token = jwt.sign(
+          { id: user.id, role: user.role },
+          process.env.JWT_SECRET,
+          { expiresIn: '1h' }
+        );
 
         res.json({ token });
+
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
