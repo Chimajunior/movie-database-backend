@@ -38,7 +38,7 @@ router.get("/", authenticateUser, async (req, res) => {
       [req.user.id]
     );
 
-    // 3. Get reviews the user marked as helpful
+    // 3. Get liked reviews
     const [liked_reviews] = await pool.query(
       `SELECT r.*, m.title AS movie_title, u.username 
        FROM review_helpful_votes v 
@@ -49,17 +49,27 @@ router.get("/", authenticateUser, async (req, res) => {
       [req.user.id]
     );
 
-    // 4. Get user's average rating
+    //  4. Get watchlist
+    const [watchlist] = await pool.query(
+      `SELECT m.id, m.title, m.poster_url 
+       FROM watchlist w
+       JOIN movies m ON w.movie_id = m.id
+       WHERE w.user_id = ?`,
+      [req.user.id]
+    );
+
+    // 5. Get user's average rating
     const [avgResult] = await pool.query(
       "SELECT AVG(rating) AS average_rating FROM reviews WHERE user_id = ?",
       [req.user.id]
     );
 
-    //  Final response
+    // Final response
     res.json({
       ...user,
       reviews,
       liked_reviews,
+      watchlist: watchlist || [], // always return an array
       average_rating: avgResult[0].average_rating || 0,
     });
   } catch (err) {
@@ -67,6 +77,7 @@ router.get("/", authenticateUser, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 // PUT /api/profile - update username and avatar
 router.put("/", authenticateUser, async (req, res) => {
