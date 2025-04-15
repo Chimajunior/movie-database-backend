@@ -25,7 +25,21 @@ app.use("/api/profile", profileRoutes);
 app.use("/api/watchlist", watchlistRoutes);
 app.use("/api/users", userRoutes); 
 
+app.get("/api/db-test", async (req, res) => {
+  try {
+    const [rows] = await pool.query("SELECT 1 + 1 AS result");
+    res.json({ result: rows[0].result });
+  } catch (error) {
+    console.error("DB Test Error:", error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+app.get("/health", (req, res) => {
+  res.send("Server is running");
+});
+
 const PORT = process.env.PORT || 5000;
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
 });
