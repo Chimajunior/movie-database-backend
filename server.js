@@ -1,9 +1,10 @@
 require('dotenv').config();
+require('./db')
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 
-const pool = require('./db'); // ✅ FIXED
+const pool = require('./db');
 const authRoutes = require('./routes/authRoutes.js');
 const movieRoutes = require('./routes/movieRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
