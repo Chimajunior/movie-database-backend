@@ -19,7 +19,7 @@ const authenticateAdmin = (req, res, next) => {
 
 
 // Add Movie (Admin Only)
-// router.post('/', authenticateAdmin, async (req, res) => {
+router.post('/', authenticateAdmin, async (req, res) => {
     router.post('/', async (req, res) => {
         const { title, genre, release_date, cast, poster_url, description } = req.body;
       
@@ -31,7 +31,7 @@ const authenticateAdmin = (req, res, next) => {
           );
       
           if (existing.length > 0) {
-            return res.status(409).json({ error: "Movie already exists." }); // 409 Conflict
+            return res.status(409).json({ error: "Movie already exists." }); 
           }
       
           // Insert the movie
@@ -49,79 +49,95 @@ const authenticateAdmin = (req, res, next) => {
       });
       
     
-// });
+});
 
 
 
 // Get Movies with Pagination, Sorting, and Filtering
 router.get('/', async (req, res) => {
-    try {
-      let { page, limit, sortBy, order, genre, year, title } = req.query;
-  
-      // Pagination setup
-      page = parseInt(page) || 1;
-      limit = parseInt(limit) || 10;
-      const offset = (page - 1) * limit;
-  
-      // Validate sortBy
-      const allowedSortFields = ['title', 'release_date', 'avg_rating'];
-      sortBy = allowedSortFields.includes(sortBy) ? sortBy : 'title';
-  
-      // Validate order
-      order = order && order.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
-  
-      // Filters
-      let conditions = [];
-      let values = [];
-  
-      if (genre) {
-        conditions.push("LOWER(m.genre) LIKE ?");
-        values.push(`%${genre.toLowerCase()}%`);
-      }
-  
-      if (year) {
-        conditions.push("YEAR(m.release_date) = ?");
-        values.push(year);
-      }
-  
-      if (title) {
-        conditions.push("LOWER(m.title) LIKE ?");
-        values.push(`%${title.toLowerCase()}%`);
-      }
-  
-      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-  
-      // Fetch filtered, sorted, paginated movies
-      const [movies] = await pool.query(
-        `SELECT m.*, IFNULL(AVG(r.rating), 0) AS avg_rating 
-         FROM movies m
-         LEFT JOIN reviews r ON m.id = r.movie_id
-         ${whereClause}
-         GROUP BY m.id
-         ORDER BY ${sortBy} ${order}
-         LIMIT ? OFFSET ?`,
-        [...values, limit, offset]
-      );
-  
-      // Count total movies (with same filter conditions)
-      const [[{ total }]] = await pool.query(
-        `SELECT COUNT(*) AS total FROM movies m ${whereClause}`,
-        values
-      );
-  
-      res.json({
-        page,
-        totalPages: Math.ceil(total / limit),
-        totalMovies: total,
-        movies
-      });
-  
-    } catch (error) {
-      console.error("Error fetching movies:", error.message);
-      res.status(500).json({ error: "Server error. Please try again later." });
+  try {
+    let { page, limit, sort, sortBy, order, genre, year, title } = req.query;
+
+    // Pagination setup
+    page = parseInt(page) || 1;
+    limit = parseInt(limit) || 100;
+    const offset = (page - 1) * limit;
+
+    // Handle sort aliases
+    if (sort === 'popular') {
+      sortBy = 'avg_rating';
+      order = 'DESC';
+    } else if (sort === 'trending') {
+      sortBy = 'release_date';
+      order = 'DESC';
+    } else if (sort === 'community') {
+      sortBy = 'review_count';
+      order = 'DESC';
     }
-  });
-  
+
+    // Validate sortBy
+    const allowedSortFields = ['title', 'release_date', 'avg_rating', 'review_count'];
+    sortBy = allowedSortFields.includes(sortBy) ? sortBy : 'title';
+
+    // Validate order
+    order = order && order.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
+
+    // Filters
+    let conditions = [];
+    let values = [];
+
+    if (genre) {
+      conditions.push("LOWER(m.genre) LIKE ?");
+      values.push(`%${genre.toLowerCase()}%`);
+    }
+
+    if (year) {
+      conditions.push("YEAR(m.release_date) = ?");
+      values.push(year);
+    }
+
+    if (title) {
+      conditions.push("LOWER(m.title) LIKE ?");
+      values.push(`%${title.toLowerCase()}%`);
+    }
+
+    if (req.query.featured === 'true') {
+      conditions.push("m.featured = 1");
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const [movies] = await pool.query(
+      `SELECT m.*, 
+              IFNULL(AVG(r.rating), 0) AS avg_rating, 
+              COUNT(r.id) AS review_count
+       FROM movies m
+       LEFT JOIN reviews r ON m.id = r.movie_id
+       ${whereClause}
+       GROUP BY m.id
+       ORDER BY ${sortBy} ${order}
+       LIMIT ? OFFSET ?`,
+      [...values, limit, offset]
+    );
+
+    const [[{ total }]] = await pool.query(
+      `SELECT COUNT(*) AS total FROM movies m ${whereClause}`,
+      values
+    );
+
+    res.json({
+      page,
+      totalPages: Math.ceil(total / limit),
+      totalMovies: total,
+      movies
+    });
+
+  } catch (error) {
+    console.error("Error fetching movies:", error.message);
+    res.status(500).json({ error: "Server error. Please try again later." });
+  }
+});
+
 
 
 
@@ -181,14 +197,18 @@ router.get('/:id', async (req, res) => {
     }
 
     try {
-        const [movie] = await pool.query(
-            `SELECT m.*, IFNULL(AVG(r.rating), 0) AS avg_rating 
-            FROM movies m 
-            LEFT JOIN reviews r ON m.id = r.movie_id 
-            WHERE m.id = ? 
-            GROUP BY m.id`, 
-            [id]
-        );
+      const [movie] = await pool.query(
+        `SELECT 
+           m.*, 
+           IFNULL(ROUND(AVG(r.rating), 1), 0) AS avg_rating,
+           COUNT(r.id) AS total_ratings
+         FROM movies m
+         LEFT JOIN reviews r ON m.id = r.movie_id
+         WHERE m.id = ?
+         GROUP BY m.id`,
+        [id]
+      );
+      
 
         if (movie.length === 0) {
             return res.status(404).json({ message: "Movie not found" });
@@ -200,25 +220,8 @@ router.get('/:id', async (req, res) => {
     }
 });
 
-router.get('/suggestions', async (req, res) => {
-    const { q } = req.query;
-  
-    if (!q || q.trim() === "") {
-      return res.json([]);
-    }
-  
-    try {
-      const [results] = await pool.query(
-        `SELECT id, title FROM movies WHERE LOWER(title) LIKE ? ORDER BY title LIMIT 10`,
-        [`%${q.toLowerCase()}%`]
-      );
-  
-      res.json(results); // Return array of { id, title }
-    } catch (error) {
-      console.error("Suggestion fetch failed:", error.message);
-      res.status(500).json({ error: "Failed to fetch suggestions" });
-    }
-  });
+
+
   
   // Get Similar Movies by Genre (excluding the current movie)
   router.get('/:id/similar', async (req, res) => {

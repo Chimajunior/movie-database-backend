@@ -4,8 +4,7 @@ const jwt = require("jsonwebtoken");
 const router = express.Router();
 const sendEmail = require('../utils/sendEmail');
 
-
-//  Middleware to Authenticate Users
+// Middleware
 const authenticateUser = (req, res, next) => {
   const token = req.header("Authorization");
   if (!token) return res.status(403).json({ message: "Access Denied: No token" });
@@ -22,34 +21,36 @@ const authenticateUser = (req, res, next) => {
   }
 };
 
-
-//  Middleware to Check If User Is an Admin
 const authenticateAdmin = (req, res, next) => {
-    const token = req.header("Authorization");
-    if (!token) return res.status(403).json({ message: "Access Denied: No token provided" });
+  const token = req.header("Authorization");
+  if (!token) {
+    console.log(" No token");
+    return res.status(403).json({ message: "Access Denied: No token" });
+  }
 
-    try {
-       // Ensure token starts with "Bearer "
-       const tokenParts = token.split(" ");
-       if (tokenParts.length !== 2 || tokenParts[0] !== "Bearer") {
-           return res.status(403).json({ message: "Invalid token format" });
-       }
-
-        const decoded = jwt.verify(tokenParts[1], process.env.JWT_SECRET);
-        
-  //  Ensure user exists in the token and is an admin
-  if (!decoded || !decoded.id || decoded.role !== 'admin') {
-    return res.status(403).json({ message: "Access Denied: Admins only" });
-}
-req.user = decoded; //  Store user info in `req.user`
-
-        next();
-    } catch (error) {
-        res.status(400).json({ message: "Invalid token" });
+  try {
+    const tokenParts = token.split(" ");
+    if (tokenParts.length !== 2 || tokenParts[0] !== "Bearer") {
+      console.log(" Invalid token format");
+      return res.status(403).json({ message: "Invalid token format" });
     }
+
+    const decoded = jwt.verify(tokenParts[1], process.env.JWT_SECRET);
+    console.log("Decoded Token:", decoded);
+
+    if (!decoded || !decoded.id || decoded.role !== 'admin') {
+      console.log(" Not an admin", decoded);
+      return res.status(403).json({ message: "Access Denied: Admins only" });
+    }
+
+    req.user = decoded;
+    next();
+  } catch (error) {
+    console.log(" Token error", error);
+    res.status(400).json({ message: "Invalid token" });
+  }
 };
 
-// Optional Auth Middleware
 const authenticateOptional = (req, res, next) => {
   const token = req.header("Authorization");
   if (!token) {
@@ -67,54 +68,53 @@ const authenticateOptional = (req, res, next) => {
   next();
 };
 
-
-
-
-//  Post a Movie Review (Logged-in Users Only)
+//  Post a Movie Rating or Review
 router.post("/", authenticateUser, async (req, res) => {
-  const { movie_id, rating, review } = req.body;
+  const { movie_id, rating, review = "" } = req.body;
   const user_id = req.user.id;
 
   try {
-    // Validate rating
     if (rating < 1 || rating > 5) {
       return res.status(400).json({ message: "Rating must be between 1 and 5" });
     }
 
-    // Check if the movie exists
     const [movie] = await pool.query("SELECT * FROM movies WHERE id = ?", [movie_id]);
     if (movie.length === 0) {
       return res.status(404).json({ message: "Movie not found" });
     }
 
-    // Prevent duplicate reviews
     const [existing] = await pool.query(
       "SELECT * FROM reviews WHERE movie_id = ? AND user_id = ?",
       [movie_id, user_id]
     );
+
     if (existing.length > 0) {
+      const [existingReview] = existing;
+      if (!existingReview.review || existingReview.review.trim() === "") {
+        await pool.query("UPDATE reviews SET rating = ?, review = ? WHERE id = ?", [
+          rating,
+          review || "",
+          existingReview.id,
+        ]);
+        return res.status(200).json({ message: "Rating updated." });
+      }
+
       return res.status(409).json({ message: "You have already reviewed this movie." });
     }
 
-    // Insert review (with like_count defaulting to 0)
-    const [insertResult] = await pool.query(
+    const [insert] = await pool.query(
       "INSERT INTO reviews (user_id, movie_id, rating, review, like_count) VALUES (?, ?, ?, ?, 0)",
       [user_id, movie_id, rating, review]
     );
 
-    const [newReview] = await pool.query(
-      `SELECT r.id, r.rating, r.review, r.created_at, r.like_count, u.username 
-       FROM reviews r 
-       JOIN users u ON r.user_id = u.id 
-       WHERE r.id = ?`,
-      [insertResult.insertId]
-    );
-
-    res.status(201).json({ message: "Review added successfully", review: newReview[0] });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(201).json({ message: "Review added", review_id: insert.insertId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
+
+
+
 
 
 router.post('/:id/helpful', authenticateUser, async (req, res) => {
@@ -157,70 +157,31 @@ router.get('/:id/helpful/count', async (req, res) => {
 });
 
 
-///  Get All Reviews for a Specific Movie
-// router.get("/:movie_id", authenticateOptional, async (req, res) => {
-//   const { movie_id } = req.params;
-//   const user_id = req.user?.id || null;
-
-//   try {
-//     const [reviews] = await pool.query(
-//       `SELECT 
-//         r.id, r.rating, r.review, r.created_at, u.username, u.avatar,
-//         (SELECT COUNT(*) FROM review_helpful_votes WHERE review_id = r.id) AS helpful_count,
-//         ${
-//           user_id
-//             ? `(SELECT COUNT(*) FROM review_helpful_votes WHERE review_id = r.id AND user_id = ?) AS voted`
-//             : `0 AS voted`
-//         }
-//        FROM reviews r 
-//        JOIN users u ON r.user_id = u.id 
-//        WHERE r.movie_id = ?
-//        ORDER BY r.created_at DESC`,
-//       user_id ? [user_id, movie_id] : [movie_id]
-//     );
-
-//     res.json(reviews);
-//   } catch (error) {
-//     res.status(500).json({ error: error.message });
-//   }
-// });
-
-router.get("/:movie_id", authenticateOptional, async (req, res) => {
-  const { movie_id } = req.params;
-  const user_id = req.user?.id;
-
-  try {
-    const [reviews] = await pool.query(`
-      SELECT 
-        r.id, r.rating, r.review, r.created_at, 
-        u.username, u.avatar,
-        (SELECT COUNT(*) FROM review_helpful_votes WHERE review_id = r.id) AS helpful_count,
-        ${
-          user_id
-            ? `(SELECT COUNT(*) FROM review_helpful_votes WHERE review_id = r.id AND user_id = ${user_id}) AS voted`
-            : `false AS voted`
-        }
-      FROM reviews r
-      JOIN users u ON r.user_id = u.id
-      WHERE r.movie_id = ?
-      ORDER BY r.created_at DESC
-    `, [movie_id]);
-
-    res.json(reviews);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
 
 
 
-//Get All Reviews
+
+
+// Get All Reviews (with only non-empty review text)
 router.get("/", async (req, res) => {
   try {
-    // Fetch all reviews from the database
     const [reviews] = await pool.query(
-      "SELECT r.id, r.rating, r.review, r.created_at, u.username, m.title AS movie_title FROM reviews r JOIN users u ON r.user_id = u.id JOIN movies m ON r.movie_id = m.id ORDER BY r.created_at DESC"
+      `SELECT 
+        r.id, 
+        r.rating, 
+        r.review, 
+        r.created_at, 
+        u.username, 
+        m.id AS movie_id,           
+        m.title AS movie_title, 
+        m.poster_url,
+        (SELECT COUNT(*) FROM review_helpful_votes WHERE review_id = r.id) AS helpful_count
+       FROM reviews r
+       JOIN users u ON r.user_id = u.id
+       JOIN movies m ON r.movie_id = m.id
+       WHERE TRIM(r.review) != ''
+       ORDER BY r.created_at DESC`
     );
 
     if (reviews.length === 0) {
@@ -232,6 +193,8 @@ router.get("/", async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+
 
 // Update a Review (Only the Review Author Can Edit)
 router.put('/:id', authenticateUser, async (req, res) => {
@@ -303,6 +266,7 @@ router.delete('/:id', authenticateUser, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
+
 
 // Get All Reviews (Admin Only)
 router.get('/admin/all', authenticateUser, async (req, res) => {
@@ -399,8 +363,11 @@ router.put('/:id/approve', authenticateAdmin, async (req, res) => {
   }
 });
 
+
+
 // Get Moderation Logs (Admins Only)
 router.get('/moderation-logs', authenticateAdmin, async (req, res) => {
+
   try {
       const [logs] = await pool.query(`
           SELECT ml.id, ml.action, ml.timestamp, 
@@ -416,6 +383,110 @@ router.get('/moderation-logs', authenticateAdmin, async (req, res) => {
       res.json(logs);
   } catch (error) {
       res.status(500).json({ error: error.message });
+  }
+});
+
+// Get All Rating-Only Entries
+router.get("/ratings/only", async (req, res) => {
+  try {
+    const [ratingsOnly] = await pool.query(
+      `SELECT 
+        r.id, 
+        r.rating, 
+        r.review, 
+        r.created_at, 
+        u.username, 
+        m.id AS movie_id,
+        m.title AS movie_title, 
+        m.poster_url
+       FROM reviews r
+       JOIN users u ON r.user_id = u.id
+       JOIN movies m ON r.movie_id = m.id
+       WHERE (r.review IS NULL OR TRIM(r.review) = '')
+       ORDER BY r.created_at DESC`
+    );
+
+    if (ratingsOnly.length === 0) {
+      return res.status(404).json({ message: "No rating-only entries found" });
+    }
+
+    res.json(ratingsOnly);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.delete("/movie/:id/user", authenticateUser, async (req, res) => {
+  const userId = req.user.id;
+  const movieId = req.params.id;
+
+  try {
+    const [result] = await pool.query(
+      "DELETE FROM reviews WHERE user_id = ? AND movie_id = ?",
+      [userId, movieId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Review not found" });
+    }
+
+    res.json({ message: "Review deleted" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+//  GET Popular Reviews (Most Helpful)
+router.get("/popular", async (req, res) => {
+  try {
+    const [popular] = await pool.query(
+      `SELECT 
+         r.id, r.rating, r.review, r.created_at,
+         u.username, u.avatar,
+         m.id AS movie_id, m.title AS movie_title, m.poster_url,
+         (SELECT COUNT(*) FROM review_helpful_votes WHERE review_id = r.id) AS helpful_count
+       FROM reviews r
+       JOIN users u ON r.user_id = u.id
+       JOIN movies m ON r.movie_id = m.id
+       WHERE TRIM(r.review) != ''
+       ORDER BY helpful_count DESC
+       LIMIT 10`
+    );
+
+    res.json(popular);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+// get movies with id
+router.get("/:movie_id", authenticateOptional, async (req, res) => {
+  const { movie_id } = req.params;
+  const user_id = req.user?.id;
+
+  try {
+    const [reviews] = await pool.query(`
+      SELECT 
+        r.id, r.user_id, r.rating, r.review, r.created_at, 
+        u.username, u.avatar,
+        (SELECT COUNT(*) FROM review_helpful_votes WHERE review_id = r.id) AS helpful_count,
+        ${
+          user_id
+            ? `(SELECT COUNT(*) FROM review_helpful_votes WHERE review_id = r.id AND user_id = ${user_id}) AS voted`
+            : `false AS voted`
+        }
+      FROM reviews r
+      JOIN users u ON r.user_id = u.id
+      WHERE r.movie_id = ? AND (r.review IS NOT NULL AND r.review != '')
+      ORDER BY r.created_at DESC
+    `, [movie_id]);
+    
+
+    res.json(reviews);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
