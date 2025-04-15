@@ -41,7 +41,11 @@ app.get("/api/db-test", async (req, res) => {
     console.error("DB Test Error:", error.message);
     res.status(500).json({ error: error.message });
   }
+  console.log("Trying DB test route");
+
 });
+console.log("ENV PORT:", process.env.PORT);
+
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, '0.0.0.0', () => {
